@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amplitude and Frequency Visualization</title>
+  <style>
+    /* Style for the page */
+    body {
+      margin: 0;
+      overflow: hidden; /* Prevents scrolling */
+      background: skyblue; /* Sets a skyblue background */
+      display: flex;
+      flex-direction: column; /* Aligns content vertically */
+      align-items: center;
+      height: 100vh;
+    }
+
+    /* Style for the graphs */
+    canvas {
+      margin-top: 10px;
+      border: 1px solid black; /* Adds border for clarity */
+    }
+
+    /* Style for the "bird" element representing frequency */
+    #bird {
+      width: 80px;
+      height: 80px;
+      background: yellow;
+      border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; /* Creates a bird-like shape */
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%); /* Centers the element */
+      box-shadow: -10px -5px 0px 0px orange inset; /* Adds wing-like detail */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+      font-weight: bold;
+      color: black;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- Element representing the bird's position and frequency -->
+  <div id="bird">0 Hz</div>
+
+  <!-- Canvases for visualizing amplitude and frequency over time -->
+  <canvas id="amplitudeGraph" width="800" height="150"></canvas>
+  <canvas id="frequencyGraph" width="800" height="150"></canvas>
+
+  <script>
+    // Constants for smoothing and data buffer size
+    const SMOOTHING_FACTOR = 0.2; // Controls how much we smooth the frequency value
+    const MAX_POINTS = 200; // Max number of data points to keep in graphs
+
+    // Variables for storing data
+    let smoothedFrequency = 0; // Holds the smoothed frequency value
+    let currentAmplitude = 0; // Holds the most recent amplitude value
+    const amplitudeData = []; // Stores amplitude values for visualization
+    const frequencyData = []; // Stores frequency values for visualization
+
+    // Frequency-to-screen mapping constants
+    const MIN_FREQUENCY = 150; // Lowest frequency to consider
+    const MAX_FREQUENCY = 300; // Highest frequency to consider
+    const MIN_POSITION = window.innerHeight - 200; // Position for the lowest frequency
+    const MAX_POSITION = 100; // Position for the highest frequency
+    const MIDDLE_POSITION = window.innerHeight / 2; // Default position when quiet
+
+    // Get references to canvases and contexts
+    const amplitudeCanvas = document.getElementById('amplitudeGraph');
+    const frequencyCanvas = document.getElementById('frequencyGraph');
+    const amplitudeCtx = amplitudeCanvas.getContext('2d');
+    const frequencyCtx = frequencyCanvas.getContext('2d');
+    const bird = document.getElementById('bird');
+
+    // Set up audio input (microphone)
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        const audioContext = new AudioContext();
+        const analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        analyser.fftSize = 1024; // Size of FFT (Fast Fourier Transform)
+        const dataArray = new Uint8Array(analyser.frequencyBinCount); // Array to hold audio data
+
+        // Function to analyze audio data
+        function analyzeAudio() {
+          analyser.getByteFrequencyData(dataArray);
+
+          // Calculate amplitude (loudness) from data array
+          currentAmplitude = Math.max(...dataArray) / 255; // Normalize to range 0-1
+          amplitudeData.push(currentAmplitude);
+          if (amplitudeData.length > MAX_POINTS) amplitudeData.shift(); // Keep array size manageable
+
+          // Find frequency with highest amplitude
+          const frequencyIndex = dataArray.indexOf(Math.max(...dataArray));
+          const rawFrequency = frequencyIndex * (audioContext.sampleRate / analyser.fftSize); // Frequency in Hz
+          smoothedFrequency = (SMOOTHING_FACTOR * rawFrequency) + 
+                              ((1 - SMOOTHING_FACTOR) * smoothedFrequency); // Apply smoothing
+          frequencyData.push(smoothedFrequency);
+          if (frequencyData.length > MAX_POINTS) frequencyData.shift(); // Maintain array size
+
+          // Update bird's position based on frequency and amplitude
+          let birdPosition;
+          if (currentAmplitude < 0.2) { // If quiet, place bird at the middle
+            birdPosition = MIDDLE_POSITION;
+          } else { // Map frequency to screen position
+            const clampedFrequency = Math.max(MIN_FREQUENCY, Math.min(MAX_FREQUENCY, smoothedFrequency));
+            birdPosition = mapRange(clampedFrequency, MIN_FREQUENCY, MAX_FREQUENCY, MIN_POSITION, MAX_POSITION);
+          }
+          bird.style.top = `${birdPosition}px`; // Update position
+          bird.textContent = `${Math.round(smoothedFrequency)} Hz`; // Display frequency
+
+          // Draw amplitude and frequency graphs
+          drawAmplitudeGraph();
+          drawFrequencyGraph();
+        }
+
+        // Function to map a value from one range to another
+        function mapRange(value, inMin, inMax, outMin, outMax) {
+          return ((value - inMin) / (inMax - inMin)) * (outMax - outMin) + outMin;
+        }
+
+        // Draw amplitude graph
+        function drawAmplitudeGraph() {
+          amplitudeCtx.clearRect(0, 0, amplitudeCanvas.width, amplitudeCanvas.height);
+
+          amplitudeCtx.beginPath();
+          amplitudeCtx.moveTo(0, amplitudeCanvas.height - amplitudeData[0] * amplitudeCanvas.height);
+          amplitudeData.forEach((value, index) => {
+            const x = (amplitudeCanvas.width / MAX_POINTS) * index;
+            const y = amplitudeCanvas.height - value * amplitudeCanvas.height;
+            amplitudeCtx.lineTo(x, y);
+          });
+          amplitudeCtx.strokeStyle = "red"; // Set line color
+          amplitudeCtx.lineWidth = 2; // Set line width
+          amplitudeCtx.stroke();
+
+          // Add labels for amplitude graph
+          amplitudeCtx.fillStyle = "black";
+          amplitudeCtx.font = "14px Arial";
+          amplitudeCtx.fillText("Time", amplitudeCanvas.width / 2 - 20, amplitudeCanvas.height - 10);
+          amplitudeCtx.fillText("Amplitude", 10, amplitudeCanvas.height / 10);
+        }
+
+        // Draw frequency graph
+        function drawFrequencyGraph() {
+          frequencyCtx.clearRect(0, 0, frequencyCanvas.width, frequencyCanvas.height);
+
+          frequencyCtx.beginPath();
+          frequencyCtx.moveTo(0, frequencyCanvas.height - mapRange(frequencyData[0], MIN_FREQUENCY, MAX_FREQUENCY, 0, frequencyCanvas.height));
+          frequencyData.forEach((value, index) => {
+            const x = (frequencyCanvas.width / MAX_POINTS) * index;
+            const y = frequencyCanvas.height - mapRange(value, MIN_FREQUENCY, MAX_FREQUENCY, 0, frequencyCanvas.height);
+            frequencyCtx.lineTo(x, y);
+          });
+          frequencyCtx.strokeStyle = "blue"; // Set line color
+          frequencyCtx.lineWidth = 2; // Set line width
+          frequencyCtx.stroke();
+
+          // Add labels and scale for frequency graph
+          frequencyCtx.fillStyle = "black";
+          frequencyCtx.font = "14px Arial";
+          frequencyCtx.fillText("Time", frequencyCanvas.width / 2 - 20, frequencyCanvas.height - 10);
+
+          // Add vertical "Frequency" label
+          frequencyCtx.save();
+          frequencyCtx.translate(60, frequencyCanvas.height / 2);
+          frequencyCtx.fillText("Frequency", 0, 0);
+          frequencyCtx.restore();
+
+          for (let i = MIN_FREQUENCY; i <= MAX_FREQUENCY; i += 50) {
+            const y = frequencyCanvas.height - mapRange(i, MIN_FREQUENCY, MAX_FREQUENCY, 0, frequencyCanvas.height);
+            frequencyCtx.fillText(`${i} Hz`, 5, y + 5);
+          }
+        }
+
+        setInterval(analyzeAudio, 100); // Analyze and update every 100ms
+      })
+      .catch((error) => {
+        console.error('Error accessing microphone:', error);
+      });
+  </script>
+</body>
+</html>
